@@ -1,8 +1,3 @@
-// SCROLL-DRIVEN BUILDING + PERSON — Flutter integration
-//
-// Architecture: a Three.js scene (three_viewer.html) runs inside a WebView.
-// Flutter tracks scroll position and calls `setScrollProgress(p)` in JS.
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:webview_flutter/webview_flutter.dart';
@@ -19,13 +14,13 @@ class _Scroll3DPageState extends State<Scroll3DPage> {
 
   bool _webViewReady = false;
   String? _loadError;
-
-  // How much scroll distance (in logical pixels) maps to the full
-  // 0.0 -> 1.0 animation. Tune this to control how "long" the scroll
-  // section feels — bigger number = slower/more scroll needed.
   static const double _scrollRangePx = 2400;
 
+  static const double _endThreshold = 0.98;
+
   double _lastSentProgress = -1;
+  double _progress = 0;
+  bool _showEndUi = false;
 
   @override
   void initState() {
@@ -59,8 +54,6 @@ class _Scroll3DPageState extends State<Scroll3DPage> {
 
   Future<void> _loadViewerHtml() async {
     try {
-      // Prefer loading via the asset bundle + loadHtmlString so iOS WKWebView
-      // doesn't depend on loadFlutterAsset path resolution.
       final html = await rootBundle.loadString('assets/three_viewer.html');
       await _webViewController.loadHtmlString(
         html,
@@ -80,6 +73,14 @@ class _Scroll3DPageState extends State<Scroll3DPage> {
     final double raw = _scrollController.offset / _scrollRangePx;
     final double progress = raw.clamp(0.0, 1.0);
     _sendProgress(progress);
+
+    final atEnd = progress >= _endThreshold;
+    if (atEnd != _showEndUi || (progress - _progress).abs() > 0.01) {
+      setState(() {
+        _progress = progress;
+        _showEndUi = atEnd;
+      });
+    }
   }
 
   void _sendProgress(double progress) {
@@ -125,14 +126,100 @@ class _Scroll3DPageState extends State<Scroll3DPage> {
           CustomScrollView(
             controller: _scrollController,
             slivers: [
+              // 3D scroll range
               SliverToBoxAdapter(
                 child: SizedBox(
                   height: _scrollRangePx + MediaQuery.of(context).size.height,
                 ),
               ),
+
+              const SliverToBoxAdapter(child: SizedBox(height: 320)),
             ],
           ),
+
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: IgnorePointer(
+              ignoring: !_showEndUi,
+              child: AnimatedSlide(
+                duration: const Duration(milliseconds: 420),
+                curve: Curves.easeOutCubic,
+                offset: _showEndUi ? Offset.zero : const Offset(0, 1),
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 320),
+                  opacity: _showEndUi ? 1 : 0,
+                  child: const _EndFlutterPanel(),
+                ),
+              ),
+            ),
+          ),
         ],
+      ),
+    );
+  }
+}
+
+class _EndFlutterPanel extends StatelessWidget {
+  const _EndFlutterPanel();
+
+  @override
+  Widget build(BuildContext context) {
+    final bottom = MediaQuery.paddingOf(context).bottom;
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        width: double.infinity,
+        margin: EdgeInsets.fromLTRB(16, 0, 16, 16 + bottom),
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.12),
+              blurRadius: 24,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'You reached the ground floor',
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF1C1B1F),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'This is Flutter UI shown when the 3D scroll ends. '
+              'Replace this panel with your real content.',
+              style: TextStyle(
+                fontSize: 14,
+                height: 1.4,
+                color: Colors.black.withValues(alpha: 0.65),
+              ),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('End CTA tapped')),
+                  );
+                },
+                child: const Text('Continue'),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
