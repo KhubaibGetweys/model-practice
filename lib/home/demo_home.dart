@@ -17,7 +17,7 @@ class _DemoHomeState extends State<DemoHome> {
   static const _pages = [
     HomePage(title: 'home1'),
     HomePage2(title: 'home2'),
-    Scroll3DModelPage(),
+    Scroll3DPage(),
   ];
 
   @override

@@ -1,106 +1,78 @@
-// SCROLL-DRIVEN 3D MODEL — Flutter example
+// SCROLL-DRIVEN BUILDING + PERSON — Flutter integration
 //
-// Mimics the effect on rebdihvacservice.vercel.app: a 3D model that
-// rotates / translates as the user scrolls the page.
+// Architecture: a Three.js scene (three_viewer.html, generated separately)
+// runs inside a WebView. The GLB models are embedded as base64 inside
+// that HTML file, so there's no separate asset-loading step for them.
+// Flutter's job is just: track scroll position -> call
+// `setScrollProgress(p)` inside the WebView on every scroll frame.
 //
-// SETUP:
-// 1. flutter create my_app
-// 2. Add to pubspec.yaml:
-//      dependencies:
-//        flutter_cube: ^0.1.1
-// 3. Put a .obj model (+ .mtl + textures) in assets/models/, e.g.
-//      assets/models/ac_unit.obj
-//    and register the folder in pubspec.yaml:
+// SETUP
+// 1. flutter pub add webview_flutter
+// 2. Put three_viewer.html in assets/ and register it in pubspec.yaml:
 //      flutter:
 //        assets:
-//          - assets/models/
-//    (Free/cheap AC-unit .obj models: Sketchfab, TurboSquid, CGTrader.
-//     If you only have a .glb, convert to .obj+.mtl with Blender:
-//     File > Import glTF, then File > Export Wavefront (.obj))
-// 4. Replace the body of your app with Scroll3DModelPage below.
-//
-// HOW IT WORKS:
-// - A ScrollController reports scroll pixel offset every frame.
-// - We map that offset to rotationY (spin), a small rotationX (tilt),
-//   and a vertical position offset (rise/fall) on the 3D object.
-// - The 3D scene sits pinned in a Stack while normal scrollable content
-//   flows underneath/around it — same visual trick the website uses
-//   (fixed/sticky 3D canvas, scrolling text beside or over it).
+//          - assets/three_viewer.html
+// 3. This harness loads Three.js from a CDN (jsdelivr) at runtime, so the
+//    device needs internet access the first time (browser-cached after).
+//    If you need fully offline operation, download the three.module.js +
+//    GLTFLoader.js files, bundle them under assets/, and change the
+//    <script type="importmap"> URLs in three_viewer.html to local paths.
+// 4. Replace your page body with Scroll3DPage below.
 
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import 'package:flutter_cube/flutter_cube.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 
-class Scroll3DModelPage extends StatefulWidget {
-  const Scroll3DModelPage({super.key});
+class Scroll3DPage extends StatefulWidget {
+  const Scroll3DPage({super.key});
   @override
-  State<Scroll3DModelPage> createState() => _Scroll3DModelPageState();
+  State<Scroll3DPage> createState() => _Scroll3DPageState();
 }
 
-class _Scroll3DModelPageState extends State<Scroll3DModelPage> {
+class _Scroll3DPageState extends State<Scroll3DPage> {
+  late final WebViewController _webViewController;
   final ScrollController _scrollController = ScrollController();
-  Object? _model;
-  Scene? _scene;
 
-  // Tune these to match how dramatic you want the movement to be.
-  static const double _rotationSpeed =
-      0.3; // degrees of spin per pixel scrolled
-  static const double _tiltRange = 15.0; // max tilt in degrees
-  static const double _riseRange = 40.0; // max vertical shift in logical px
+  bool _webViewReady = false;
 
-  double _scrollOffset = 0;
+  // How much scroll distance (in logical pixels) maps to the full
+  // 0.0 -> 1.0 animation. Tune this to control how "long" the scroll
+  // section feels — bigger number = slower/more scroll needed.
+  static const double _scrollRangePx = 2400;
+
+  double _lastSentProgress = -1;
 
   @override
   void initState() {
     super.initState();
+
+    _webViewController = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setBackgroundColor(const Color(0x00000000)) // transparent
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onPageFinished: (_) {
+            setState(() => _webViewReady = true);
+            _sendProgress(0); // initialize scene at scrollProgress = 0
+          },
+        ),
+      )
+      ..loadFlutterAsset('assets/three_viewer.html');
+
     _scrollController.addListener(_onScroll);
   }
 
   void _onScroll() {
-    setState(() {
-      _scrollOffset = _scrollController.offset;
-    });
-    _applyTransform();
+    final double raw = _scrollController.offset / _scrollRangePx;
+    final double progress = raw.clamp(0.0, 1.0);
+    _sendProgress(progress);
   }
 
-  void _onSceneCreated(Scene scene) {
-    _scene = scene;
-    _model = Object(
-      fileName: 'assets/models/old_air_conditioner.glb',
-      scale: Vector3(1.0, 1.0, 1.0),
-      position: Vector3(0, 0, 0),
-    );
-    scene.world.add(_model!);
-    scene.camera.position.z = 6;
-    scene.update();
-  }
-
-  void _applyTransform() {
-    if (_model == null || _scene == null) return;
-
-    // Continuous spin tied to scroll — this is the "moving while
-    // scrolling" feel from the reference site.
-    final double spin = (_scrollOffset * _rotationSpeed) % 360;
-
-    // Gentle back-and-forth tilt using a sine wave over scroll distance,
-    // so it doesn't just tilt one direction forever.
-    final double tilt = _tiltRange * (0.5 - 0.5 * _cos(_scrollOffset / 300));
-
-    _model!.rotation.setValues(tilt, spin, 0);
-
-    // Optional: let the model rise as you scroll down a hero section,
-    // then hold — clamp so it stops moving after some scroll distance.
-    final double clampedScroll = _scrollOffset.clamp(0, 600);
-    final double rise = (clampedScroll / 600) * _riseRange;
-    _model!.position.setValues(0, -rise / 100, 0);
-
-    _model!.updateTransform();
-    _scene!.update();
-  }
-
-  double _cos(double radians) {
-    // tiny helper so we don't need dart:math import clutter above
-    return math.cos(radians);
+  void _sendProgress(double progress) {
+    if (!_webViewReady) return;
+    // Cheap de-dupe so we don't spam the JS bridge on tiny scroll deltas.
+    if ((progress - _lastSentProgress).abs() < 0.0015) return;
+    _lastSentProgress = progress;
+    _webViewController.runJavaScript('setScrollProgress($progress)');
   }
 
   @override
@@ -112,46 +84,27 @@ class _Scroll3DModelPageState extends State<Scroll3DModelPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF0B1220),
+      backgroundColor: const Color(0xFFEFE9E2),
       body: Stack(
         children: [
-          // Pinned 3D canvas — stays fixed while page content scrolls.
-          Positioned.fill(child: Cube(onSceneCreated: _onSceneCreated)),
+          // The 3D scene stays pinned full-screen; the WebView itself
+          // never scrolls — only setScrollProgress() changes what's shown.
+          Positioned.fill(child: WebViewWidget(controller: _webViewController)),
+          if (!_webViewReady)
+            const Positioned.fill(
+              child: Center(child: CircularProgressIndicator()),
+            ),
 
-          // Scrollable content on top; the model reacts as this scrolls.
+          // Invisible scroll surface on top — its offset is the only thing
+          // driving the 3D scene. Swap the SizedBox height / sections for
+          // your real page content (text sections, CTAs, etc. can sit in
+          // here too, laid out however you like around the pinned 3D view).
           CustomScrollView(
             controller: _scrollController,
             slivers: [
               SliverToBoxAdapter(
                 child: SizedBox(
-                  height: MediaQuery.of(context).size.height,
-                  child: const Center(
-                    child: Text(
-                      'Scroll down',
-                      style: TextStyle(color: Colors.white70, fontSize: 18),
-                    ),
-                  ),
-                ),
-              ),
-              SliverList(
-                delegate: SliverChildBuilderDelegate(
-                  (context, index) => Container(
-                    height: 300,
-                    margin: const EdgeInsets.symmetric(
-                      horizontal: 24,
-                      vertical: 12,
-                    ),
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.04),
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Text(
-                      'Section ${index + 1}',
-                      style: const TextStyle(color: Colors.white),
-                    ),
-                  ),
-                  childCount: 6,
+                  height: _scrollRangePx + MediaQuery.of(context).size.height,
                 ),
               ),
             ],
