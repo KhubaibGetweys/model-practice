@@ -1,25 +1,10 @@
 // SCROLL-DRIVEN BUILDING + PERSON — Flutter integration
 //
-// Architecture: a Three.js scene (three_viewer.html, generated separately)
-// runs inside a WebView. The GLB models are embedded as base64 inside
-// that HTML file, so there's no separate asset-loading step for them.
-// Flutter's job is just: track scroll position -> call
-// `setScrollProgress(p)` inside the WebView on every scroll frame.
-//
-// SETUP
-// 1. flutter pub add webview_flutter
-// 2. Put three_viewer.html in assets/ and register it in pubspec.yaml:
-//      flutter:
-//        assets:
-//          - assets/three_viewer.html
-// 3. This harness loads Three.js from a CDN (jsdelivr) at runtime, so the
-//    device needs internet access the first time (browser-cached after).
-//    If you need fully offline operation, download the three.module.js +
-//    GLTFLoader.js files, bundle them under assets/, and change the
-//    <script type="importmap"> URLs in three_viewer.html to local paths.
-// 4. Replace your page body with Scroll3DPage below.
+// Architecture: a Three.js scene (three_viewer.html) runs inside a WebView.
+// Flutter tracks scroll position and calls `setScrollProgress(p)` in JS.
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:webview_flutter/webview_flutter.dart';
 
 class Scroll3DPage extends StatefulWidget {
@@ -33,6 +18,7 @@ class _Scroll3DPageState extends State<Scroll3DPage> {
   final ScrollController _scrollController = ScrollController();
 
   bool _webViewReady = false;
+  String? _loadError;
 
   // How much scroll distance (in logical pixels) maps to the full
   // 0.0 -> 1.0 animation. Tune this to control how "long" the scroll
@@ -47,18 +33,47 @@ class _Scroll3DPageState extends State<Scroll3DPage> {
 
     _webViewController = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(const Color(0x00000000)) // transparent
+      ..setBackgroundColor(const Color(0x00000000))
       ..setNavigationDelegate(
         NavigationDelegate(
           onPageFinished: (_) {
-            setState(() => _webViewReady = true);
-            _sendProgress(0); // initialize scene at scrollProgress = 0
+            if (!mounted) return;
+            setState(() {
+              _webViewReady = true;
+              _loadError = null;
+            });
+            _sendProgress(0);
+          },
+          onWebResourceError: (error) {
+            if (!mounted) return;
+            setState(() {
+              _loadError = error.description;
+            });
           },
         ),
-      )
-      ..loadFlutterAsset('assets/three_viewer.html');
+      );
 
     _scrollController.addListener(_onScroll);
+    _loadViewerHtml();
+  }
+
+  Future<void> _loadViewerHtml() async {
+    try {
+      // Prefer loading via the asset bundle + loadHtmlString so iOS WKWebView
+      // doesn't depend on loadFlutterAsset path resolution.
+      final html = await rootBundle.loadString('assets/three_viewer.html');
+      await _webViewController.loadHtmlString(
+        html,
+        baseUrl: 'https://localhost/',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loadError =
+            'Could not load assets/three_viewer.html.\n'
+            'Check pubspec.yaml assets, then hot restart.\n\n$e';
+      });
+    }
   }
 
   void _onScroll() {
@@ -69,7 +84,6 @@ class _Scroll3DPageState extends State<Scroll3DPage> {
 
   void _sendProgress(double progress) {
     if (!_webViewReady) return;
-    // Cheap de-dupe so we don't spam the JS bridge on tiny scroll deltas.
     if ((progress - _lastSentProgress).abs() < 0.0015) return;
     _lastSentProgress = progress;
     _webViewController.runJavaScript('setScrollProgress($progress)');
@@ -87,18 +101,27 @@ class _Scroll3DPageState extends State<Scroll3DPage> {
       backgroundColor: const Color(0xFFEFE9E2),
       body: Stack(
         children: [
-          // The 3D scene stays pinned full-screen; the WebView itself
-          // never scrolls — only setScrollProgress() changes what's shown.
           Positioned.fill(child: WebViewWidget(controller: _webViewController)),
-          if (!_webViewReady)
+          if (_loadError != null)
+            Positioned.fill(
+              child: ColoredBox(
+                color: const Color(0xFFEFE9E2),
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text(
+                      _loadError!,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(color: Colors.redAccent),
+                    ),
+                  ),
+                ),
+              ),
+            )
+          else if (!_webViewReady)
             const Positioned.fill(
               child: Center(child: CircularProgressIndicator()),
             ),
-
-          // Invisible scroll surface on top — its offset is the only thing
-          // driving the 3D scene. Swap the SizedBox height / sections for
-          // your real page content (text sections, CTAs, etc. can sit in
-          // here too, laid out however you like around the pinned 3D view).
           CustomScrollView(
             controller: _scrollController,
             slivers: [
