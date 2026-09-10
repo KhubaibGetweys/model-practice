@@ -1,5 +1,3 @@
-import 'dart:developer';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_3d_controller/flutter_3d_controller.dart';
 
@@ -20,7 +18,6 @@ class _HomePageState extends State<HomePage> {
     super.initState();
     // Listen for when the model finishes loading.
     controller.onModelLoaded.addListener(() {
-      log('model is loaded : ${controller.onModelLoaded.value}');
       if (controller.onModelLoaded.value) {
         // IMPORTANT: for large outdoor scenes, auto-framing often places the
         // camera inside the terrain/sky mesh. Set the camera explicitly
@@ -57,15 +54,9 @@ class _HomePageState extends State<HomePage> {
               controller: controller,
               src: 'assets/models/airplane.glb',
               // src: 'https://modelviewer.dev/shared-assets/models/Astronaut.glb',
-              onProgress: (double progressValue) {
-                log('model loading progress : $progressValue');
-              },
-              onLoad: (String modelAddress) {
-                log('model loaded : $modelAddress');
-              },
-              onError: (String error) {
-                log('model failed to load : $error');
-              },
+              onProgress: (double progressValue) {},
+              onLoad: (String modelAddress) {},
+              onError: (String error) {},
             ),
           ),
           Padding(

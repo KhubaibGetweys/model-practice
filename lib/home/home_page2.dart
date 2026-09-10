@@ -1,5 +1,3 @@
-import 'dart:developer';
-
 import 'package:flutter/material.dart';
 import 'package:o3d/o3d.dart';
 
@@ -20,9 +18,7 @@ class _HomePage2State extends State<HomePage2> {
     // o3d doesn't expose an onModelLoaded listener like flutter_3d_controller.
     // Instead, it gives you a `logger` callback that reports internal events
     // (including load progress/errors) as raw strings.
-    controller.logger = (data) {
-      log('o3d log: $data');
-    };
+    controller.logger = (data) {};
   }
 
   @override
@@ -65,10 +61,7 @@ class _HomePage2State extends State<HomePage2> {
                 ),
                 IconButton(
                   tooltip: 'List available animations',
-                  onPressed: () async {
-                    final animations = await controller.availableAnimations();
-                    log('Available animations: $animations');
-                  },
+                  onPressed: () {},
                   icon: const Icon(Icons.list_alt_rounded),
                 ),
                 IconButton(
